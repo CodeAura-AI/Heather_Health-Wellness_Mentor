@@ -1,0 +1,238 @@
+import streamlit as st
+import sqlite3
+import pandas as pd
+import plotly.express as px
+import datetime
+import speech_recognition as sr
+import random
+import csv
+from io import StringIO
+import sys
+
+# Check if script is run with `streamlit run`
+if 'streamlit' not in sys.modules or not hasattr(st, 'script_run_context'):
+    print("""
+    Error: This Streamlit app must be run using the command:
+    
+        streamlit run app.py
+    
+    Please run the above command in your terminal and access the app in your browser at http://localhost:8501.
+    Running this script with `python app.py` is not supported.
+    """)
+    sys.exit(1)
+
+# Initialize SQLite database
+def init_db():
+    conn = sqlite3.connect('heather_health.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS goals
+                 (user_id TEXT, goal TEXT, target_date TEXT, status TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS mood_logs
+                 (user_id TEXT, date TEXT, mood TEXT, notes TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS quiz_scores
+                 (user_id TEXT, quiz_name TEXT, score INTEGER, date TEXT)''')
+    conn.commit()
+    return conn
+
+# Simple rule-based chatbot (placeholder for AI model)
+def get_chat_response(user_input, user_id):
+    user_input = user_input.lower()
+    responses = {
+        "stress": "Try deep breathing: inhale for 4 seconds, hold for 4, exhale for 4. Want more stress-relief tips?",
+        "nutrition": "Aim for a balanced plate: 50% veggies, 25% protein, 25% carbs. Need a meal plan?",
+        "exercise": "A 20-minute walk daily boosts mood and health. Want a workout routine?",
+        "sleep": "Aim for 7-8 hours and avoid screens before bed. Need a bedtime routine?",
+        "goals": "Let's set a goal! What do you want to achieve this week?",
+        "default": "I'm here to help with health and wellness! Try asking about stress, nutrition, or exercise."
+    }
+    for key, response in responses.items():
+        if key in user_input:
+            return response
+    return responses["default"]
+
+# Daily wellness tips
+def get_daily_tip():
+    tips = [
+        "Drink a glass of water first thing in the morning to kickstart hydration!",
+        "Take 5 minutes to stretch—it boosts energy and reduces tension.",
+        "Eat a colorful fruit or veggie today for a nutrient boost.",
+        "Practice gratitude: write down one thing you’re thankful for.",
+        "Get outside for 10 minutes—sunlight lifts your mood!"
+    ]
+    return random.choice(tips)
+
+# Streamlit App
+st.set_page_config(page_title="Heather Health Mentor", layout="wide")
+
+# Initialize session state
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = "user_" + str(random.randint(1000, 9999))
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'voice_input' not in st.session_state:
+    st.session_state.voice_input = ""
+
+# Initialize database
+conn = init_db()
+
+# Sidebar for navigation
+st.sidebar.title("Heather Health Mentor")
+page = st.sidebar.radio("Navigate", [
+    "Home", "Chat with Heather", "Set Goals", "Mood Tracker",
+    "Learn Wellness", "Take a Quiz", "Progress Dashboard", "Resources"
+])
+
+# Home Page
+if page == "Home":
+    st.title("Welcome to Heather Health Mentor! 🌿")
+    st.write("Your personal AI coach for health, wellness, and self-care.")
+    st.subheader("Daily Wellness Tip")
+    st.info(get_daily_tip())
+    st.subheader("Get Started")
+    st.write("Use the sidebar to chat with Heather, set goals, track your mood, or explore wellness lessons.")
+
+# Chat with Heather
+elif page == "Chat with Heather":
+    st.title("Chat with Heather 🗣️")
+    st.write("Ask about stress, nutrition, exercise, or anything wellness-related!")
+
+    # Voice input
+    if st.button("🎤 Use Voice Input"):
+        try:
+            r = sr.Recognizer()
+            with sr.Microphone() as source:
+                st.write("Listening...")
+                audio = r.listen(source, timeout=5)
+                st.session_state.voice_input = r.recognize_google(audio)
+                st.write(f"You said: {st.session_state.voice_input}")
+        except Exception as e:
+            st.error(f"Voice input failed: {e}")
+
+    # Text input
+    user_input = st.text_input("Type your message:", value=st.session_state.voice_input)
+    if user_input:
+        response = get_chat_response(user_input, st.session_state.user_id)
+        st.session_state.chat_history.append({"user": user_input, "heather": response})
+        st.session_state.voice_input = ""  # Clear voice input
+
+    # Display chat history
+    for chat in st.session_state.chat_history:
+        st.write(f"**You**: {chat['user']}")
+        st.write(f"**Heather**: {chat['heather']}")
+
+# Set Goals
+elif page == "Set Goals":
+    st.title("Set Wellness Goals 🎯")
+    goal = st.text_input("Enter a goal (e.g., Meditate 10 min daily):")
+    target_date = st.date_input("Target completion date:")
+    if st.button("Add Goal"):
+        c = conn.cursor()
+        c.execute("INSERT INTO goals (user_id, goal, target_date, status) VALUES (?, ?, ?, ?)",
+                  (st.session_state.user_id, goal, str(target_date), "Active"))
+        conn.commit()
+        st.success("Goal added!")
+
+    # Display goals
+    c = conn.cursor()
+    c.execute("SELECT goal, target_date, status FROM goals WHERE user_id = ?", (st.session_state.user_id,))
+    goals = c.fetchall()
+    if goals:
+        st.subheader("Your Goals")
+        df = pd.DataFrame(goals, columns=["Goal", "Target Date", "Status"])
+        st.dataframe(df)
+
+# Mood Tracker
+elif page == "Mood Tracker":
+    st.title("Mood Tracker 😊")
+    mood = st.selectbox("How are you feeling today?", ["Happy", "Calm", "Stressed", "Sad", "Anxious"])
+    notes = st.text_area("Any notes about your mood?")
+    if st.button("Log Mood"):
+        c = conn.cursor()
+        c.execute("INSERT INTO mood_logs (user_id, date, mood, notes) VALUES (?, ?, ?, ?)",
+                  (st.session_state.user_id, str(datetime.date.today()), mood, notes))
+        conn.commit()
+        st.success("Mood logged!")
+
+    # Display mood history
+    c = conn.cursor()
+    c.execute("SELECT date, mood, notes FROM mood_logs WHERE user_id = ?", (st.session_state.user_id,))
+    moods = c.fetchall()
+    if moods:
+        st.subheader("Mood History")
+        df = pd.DataFrame(moods, columns=["Date", "Mood", "Notes"])
+        st.dataframe(df)
+
+# Learn Wellness
+elif page == "Learn Wellness":
+    st.title("Learn Wellness 📚")
+    lessons = {
+        "Mindfulness 101": "Mindfulness reduces stress and improves focus. Try this: Sit quietly for 5 minutes, focusing on your breath. If your mind wanders, gently bring it back.",
+        "Nutrition Basics": "Eat a variety of foods, including plenty of fruits and vegetables. Aim for 5 servings daily and limit processed foods.",
+        "Fitness for Beginners": "Start with 150 minutes of moderate exercise per week, like brisk walking or yoga. Consistency is key!"
+    }
+    lesson = st.selectbox("Choose a lesson:", list(lessons.keys()))
+    st.write(lessons[lesson])
+    st.write("Want to discuss this topic with Heather? Head to the Chat page!")
+
+# Take a Quiz
+elif page == "Take a Quiz":
+    st.title("Take a Wellness Quiz ❓")
+    quiz_name = "Stress Management Quiz"
+    questions = [
+        {"q": "How often do you practice deep breathing?", "options": ["Daily", "Sometimes", "Never"], "correct": "Daily"},
+        {"q": "Do you take breaks during stressful tasks?", "options": ["Always", "Sometimes", "Never"], "correct": "Always"}
+    ]
+    score = 0
+    for i, q in enumerate(questions):
+        st.write(f"Question {i+1}: {q['q']}")
+        answer = st.radio(f"Select an answer for question {i+1}", q["options"], key=f"q{i}")
+        if answer == q["correct"]:
+            score += 1
+    if st.button("Submit Quiz"):
+        c = conn.cursor()
+        c.execute("INSERT INTO quiz_scores (user_id, quiz_name, score, date) VALUES (?, ?, ?, ?)",
+                  (st.session_state.user_id, quiz_name, score, str(datetime.date.today())))
+        conn.commit()
+        st.success(f"Your score: {score}/{len(questions)}")
+
+# Progress Dashboard
+elif page == "Progress Dashboard":
+    st.title("Progress Dashboard 📊")
+    c = conn.cursor()
+    c.execute("SELECT date, mood FROM mood_logs WHERE user_id = ?", (st.session_state.user_id,))
+    moods = c.fetchall()
+    if moods:
+        df = pd.DataFrame(moods, columns=["Date", "Mood"])
+        fig = px.line(df, x="Date", y="Mood", title="Mood Trends")
+        st.plotly_chart(fig)
+
+    c.execute("SELECT goal, status FROM goals WHERE user_id = ?", (st.session_state.user_id,))
+    goals = c.fetchall()
+    if goals:
+        df = pd.DataFrame(goals, columns=["Goal", "Status"])
+        fig = px.pie(df, names="Status", title="Goal Completion Status")
+        st.plotly_chart(fig)
+
+    # Data export
+    if st.button("Export Data as CSV"):
+        c = conn.cursor()
+        c.execute("SELECT * FROM mood_logs WHERE user_id = ?", (st.session_state.user_id,))
+        moods = c.fetchall()
+        df = pd.DataFrame(moods, columns=["User ID", "Date", "Mood", "Notes"])
+        csv_buffer = StringIO()
+        df.to_csv(csv_buffer, index=False)
+        st.download_button("Download Mood Data", csv_buffer.getvalue(), "mood_data.csv", "text/csv")
+
+# Resources
+elif page == "Resources":
+    st.title("Wellness Resources 📖")
+    resources = [
+        {"title": "Harvard Health: Stress Management", "url": "https://www.health.harvard.edu/topics/stress"},
+        {"title": "MyPlate: Nutrition Guide", "url": "https://www.myplate.gov/"},
+        {"title": "Yoga with Adriene (YouTube)", "url": "https://www.youtube.com/user/yogawithadriene"}
+    ]
+    for r in resources:
+        st.write(f"- [{r['title']}]({r['url']})")
+
+# Close database connection
+conn.close()
